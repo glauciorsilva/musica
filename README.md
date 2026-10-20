@@ -7,8 +7,12 @@ Aplicativo web (funciona no navegador do celular e do computador) para criar par
 2. **Escrevendo à mão** — em **✏️ Editar**, escolha a duração e toque nas teclas do piano (ou use o teclado do
    computador). Compassos, barras e ligaduras entre compassos são criados automaticamente.
 
+Também transcreve **músicas do YouTube** (capturando o som da aba no computador) e reconhece **várias notas ao
+mesmo tempo** — acordes, melodia principal de uma música completa ou a linha do baixo — com o modelo de IA
+[Basic Pitch](https://basicpitch.spotify.com/), que roda dentro do próprio navegador.
+
 Tudo pode ser editado: altura, duração, ponto de aumento, pausas, acidentes (♯/♭), oitava, ligaduras,
-compasso, tonalidade (armadura), clave, andamento, título e compositor.
+acordes, compasso, tonalidade (armadura), clave (Sol, Fá ou pauta dupla de piano), andamento, título e compositor.
 
 ## Como usar
 
@@ -16,6 +20,10 @@ compasso, tonalidade (armadura), clave, andamento, título e compositor.
 | --- | --- |
 | Gravar pelo microfone | Aba **🎤 Gravar** → botão vermelho. Toque de novo para parar. |
 | Transcrever um áudio gravado | Aba **🎤 Gravar** → *Transcrever arquivo de áudio* (mp3, wav, m4a…) |
+| Transcrever do YouTube | Aba **🎤 Gravar** → *Música do YouTube* → cole o link → *Transcrever o som de uma aba* |
+| Escolher o que transcrever | *O que transcrever*: melodia (ao vivo), melodia principal, todas as notas/acordes ou baixo (IA) |
+| Descobrir o andamento | **👆 Marcar o andamento no ritmo**: toque no botão acompanhando a música |
+| Montar acordes | Ligue **+ Acorde** (acima do piano) e toque as teclas para juntar notas à nota atual |
 | Inserir nota | Escolha a duração (1, ½, ¼, ⅛, 1/16, 1/32) e toque no piano |
 | Inserir pausa | Botão **Pausa** (sem nota selecionada) |
 | Corrigir a última nota inserida | ♯, ♭, ▲/▼ (passo na escala), 8ª▲/8ª▼ |
@@ -41,6 +49,21 @@ compasso, tonalidade (armadura), clave, andamento, título e compositor.
   se a transcrição sair "picada" demais.
 - Em ambiente barulhento, diminua a **sensibilidade**.
 - O afinador mostra em tempo real a nota ouvida e o desvio em cents.
+
+### Músicas completas e YouTube (IA)
+
+- **Melodia principal**: pega a voz/solo de uma música com acompanhamento (a nota mais aguda em cada momento).
+- **Todas as notas, com acordes**: escreve tudo o que for reconhecido, em pauta dupla de piano.
+- **Linha do baixo**: só as notas graves.
+- A análise acontece **quando você para a gravação** (ou ao escolher o arquivo). No computador leva poucos
+  segundos por minuto de música; em celulares mais simples pode demorar mais.
+- **YouTube no computador** (Chrome/Edge): ao tocar em *Transcrever o som de uma aba*, escolha esta aba (ou a
+  aba do YouTube), marque **Compartilhar áudio da aba** e dê play no vídeo. Toque de novo para parar.
+- **YouTube no celular**: os navegadores de celular não permitem capturar o som da aba. Dê play no vídeo com o
+  volume alto e grave pelo microfone (botão vermelho).
+- O resultado é um **rascunho**: com banda completa (voz, bateria, vários instrumentos) sempre haverá notas para
+  corrigir no editor. Separar voz e instrumental antes de transcrever é uma etapa futura.
+- Respeite os direitos autorais das músicas que você transcrever.
 
 ## Rodando
 
@@ -73,9 +96,11 @@ css/style.css       estilos (mobile first)
 js/app.js           estado, edição, gravação, menu
 js/score.js         modelo da partitura, compassos, tonalidades
 js/pitch.js         detecção de altura (YIN) e transcrição rítmica
+js/poly.js          transcrição polifônica com IA (Basic Pitch) e quantização de acordes
 js/render.js        desenho da partitura com VexFlow
 js/audio.js         microfone, metrônomo, reprodução
 js/export.js        MusicXML e MIDI
 vendor/vexflow.js   VexFlow 4.2.3 (MIT) — desenho da notação musical
+vendor/basic-pitch/ Basic Pitch 1.0.1 + TensorFlow.js 3.21 (Apache-2.0) — modelo de IA, carregado sob demanda
 sw.js               funcionamento offline (PWA)
 ```

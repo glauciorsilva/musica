@@ -42,6 +42,7 @@
       <select id="clef">
         <option value="treble">Sol</option>
         <option value="bass">Fá</option>
+        <option value="grand">Piano (Sol + Fá)</option>
       </select>
     </label>
     <label class="wide">Compositor
@@ -88,6 +89,7 @@
       <div class="piano-bar">
         <button id="btnPianoDown" class="tool small" aria-label="Oitavas abaixo">−</button>
         <span id="pianoRange" class="piano-range"></span>
+        <button id="btnChord" class="tool small chord" title="Juntar notas à nota atual, formando um acorde">+ Acorde</button>
         <button id="btnPianoUp" class="tool small" aria-label="Oitavas acima">+</button>
       </div>
       <div id="piano" class="piano" aria-label="Teclado"></div>
@@ -104,6 +106,15 @@
         </div>
       </div>
       <div class="rec-opts">
+        <label class="wide">O que transcrever
+          <select id="optMode">
+            <option value="mono">Melodia — uma nota por vez (aparece ao vivo)</option>
+            <option value="top">Melodia principal de uma música completa (IA)</option>
+            <option value="all">Todas as notas, com acordes (IA)</option>
+            <option value="bottom">Linha do baixo (IA)</option>
+          </select>
+        </label>
+        <button id="btnTap" class="tool" type="button" title="Toque no ritmo da música para definir o andamento">👆 Marcar o andamento no ritmo</button>
         <label><input id="optMetronome" type="checkbox"> Metrônomo (1 compasso de contagem)</label>
         <label><input id="optMergeRests" type="checkbox" checked> Ignorar pausas curtas</label>
         <label>Precisão rítmica
@@ -117,10 +128,20 @@
           <input id="optSensitivity" type="range" min="1" max="10" value="6">
         </label>
         <label class="file-btn">🎵 Transcrever arquivo de áudio
-          <input id="audioFile" type="file" accept="audio/*" hidden>
+          <input id="audioFile" type="file" accept="audio/*,video/*" hidden>
         </label>
       </div>
-      <p class="hint small">Funciona melhor com uma melodia (uma nota de cada vez): voz, flauta, violino, assobio… O andamento usado é o das configurações (⚙).</p>
+      <details class="yt">
+        <summary>▶️ Música do YouTube</summary>
+        <div class="yt-row">
+          <input id="ytUrl" type="url" inputmode="url" placeholder="Cole aqui o link do YouTube" aria-label="Link do YouTube">
+          <button id="btnYt" class="tool" type="button">Abrir</button>
+        </div>
+        <div id="ytPlayer" class="yt-player" hidden></div>
+        <button id="btnTab" class="tool tab-btn" type="button">🎧 Transcrever o som de uma aba</button>
+        <p id="ytHint" class="hint small"></p>
+      </details>
+      <p class="hint small">“Melodia” funciona melhor com voz, flauta, violino, assobio… (uma nota de cada vez). As opções com IA reconhecem várias notas juntas e são processadas ao parar a gravação. Acerte o andamento antes (⚙ ou 👆) para o ritmo sair certo.</p>
     </div>
   </footer>
 
@@ -151,6 +172,8 @@
     <h2>Como usar</h2>
     <p><b>🎤 Gravar:</b> toque no botão vermelho, permita o microfone e cante ou toque. As notas aparecem na partitura enquanto você toca. Ajuste o andamento (⚙) para o ritmo ficar correto, ou ligue o metrônomo.</p>
     <p><b>✏️ Editar:</b> escolha a duração (1, ½, ¼, ⅛…) e toque nas teclas do piano. Toque numa nota da partitura para selecioná-la e mudar altura, duração, ponto, acidente ou apagá-la. Toque entre as notas para posicionar o cursor de inserção.</p>
+    <p><b>YouTube:</b> na aba Gravar, abra “Música do YouTube”, cole o link e, no computador, use “Transcrever o som de uma aba”. Para uma música completa, escolha “Melodia principal”, “Todas as notas” ou “Linha do baixo”.</p>
+    <p><b>Acordes:</b> ligue “+ Acorde” acima do piano e toque as teclas para juntar notas à nota atual.</p>
     <p><b>Inserir / Substituir:</b> em “Substituir”, o piano troca a altura da nota selecionada e avança para a próxima.</p>
     <p><b>Teclado do computador:</b> A–G inserem notas, 1–6 mudam a duração, “.” ponto, 0 pausa, ↑/↓ escala, ←/→ navegar, Delete apaga, Ctrl+Z desfaz, espaço toca.</p>
     <p>As barras de compasso e as ligaduras entre compassos são criadas automaticamente. Tudo é salvo automaticamente no aparelho.</p>

@@ -7,46 +7,61 @@ const TICKS = { w: 32, h: 16, q: 8, 8: 4, 16: 2, 32: 1 };
 
 const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
 
+// staff: null (pauta única) ou 1/2 (pauta dupla: só as alturas daquela pauta)
+const onStaff = (p, staff) => (p.rest ? [] : staff === null ? p.midis : p.midis.filter((m) => (staff === 1 ? m >= 60 : m < 60)));
+
+function noteXML(p, prev, next, keySig, staff = null) {
+  const dur = TICKS[p.dur] * (p.dots ? 1.5 : 1);
+  const dot = p.dots ? '<dot/>' : '';
+  const st = staff ? `<staff>${staff}</staff>` : '';
+  const midis = onStaff(p, staff);
+  if (!midis.length) return `<note><rest/><duration>${dur}</duration><type>${XML_TYPE[p.dur]}</type>${dot}${st}</note>`;
+  return midis
+    .map((m, i) => {
+      const s = spell(m, keySig, m === p.midi ? p.pref : null);
+      const alter = s.alter ? `<alter>${s.alter}</alter>` : '';
+      const ties = [];
+      const tied = [];
+      if (prev && prev.tie && onStaff(prev, staff).includes(m)) {
+        ties.push('<tie type="stop"/>');
+        tied.push('<tied type="stop"/>');
+      }
+      if (p.tie && next && onStaff(next, staff).includes(m)) {
+        ties.push('<tie type="start"/>');
+        tied.push('<tied type="start"/>');
+      }
+      const notations = tied.length ? `<notations>${tied.join('')}</notations>` : '';
+      return `<note>${i ? '<chord/>' : ''}<pitch><step>${s.letter.toUpperCase()}</step>${alter}<octave>${s.octave}</octave></pitch>` +
+        `<duration>${dur}</duration>${ties.join('')}<type>${XML_TYPE[p.dur]}</type>${dot}${st}${notations}</note>`;
+    })
+    .join('');
+}
+
 export function toMusicXML(score) {
   const measures = layoutMeasures(score);
-  const clef = score.clef === 'bass' ? '<sign>F</sign><line>4</line>' : '<sign>G</sign><line>2</line>';
-  let prevTieStop = false;
+  const flat = measures.flat();
+  const grand = score.clef === 'grand';
+  const G = '<sign>G</sign><line>2</line>';
+  const F = '<sign>F</sign><line>4</line>';
+  const clef = grand
+    ? `<staves>2</staves><clef number="1">${G}</clef><clef number="2">${F}</clef>`
+    : `<clef>${score.clef === 'bass' ? F : G}</clef>`;
+  let k = 0;
   const body = measures
     .map((m, i) => {
       let attrs = '';
       if (i === 0) {
         attrs = `<attributes><divisions>8</divisions><key><fifths>${keyFifths(score.keySig)}</fifths></key>` +
           `<time><beats>${score.timeSig.num}</beats><beat-type>${score.timeSig.den}</beat-type></time>` +
-          `<clef>${clef}</clef></attributes>` +
+          `${clef}</attributes>` +
           `<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit>` +
           `<per-minute>${score.tempo}</per-minute></metronome></direction-type><sound tempo="${score.tempo}"/></direction>`;
       }
-      const notes = m
-        .map((p) => {
-          const dur = TICKS[p.dur] * (p.dots ? 1.5 : 1);
-          const dot = p.dots ? '<dot/>' : '';
-          if (p.rest) {
-            prevTieStop = false;
-            return `<note><rest/><duration>${dur}</duration><type>${XML_TYPE[p.dur]}</type>${dot}</note>`;
-          }
-          const s = spell(p.midi, score.keySig, p.pref);
-          const alter = s.alter ? `<alter>${s.alter}</alter>` : '';
-          const ties = [];
-          const tied = [];
-          if (prevTieStop) {
-            ties.push('<tie type="stop"/>');
-            tied.push('<tied type="stop"/>');
-          }
-          if (p.tie) {
-            ties.push('<tie type="start"/>');
-            tied.push('<tied type="start"/>');
-          }
-          prevTieStop = p.tie;
-          const notations = tied.length ? `<notations>${tied.join('')}</notations>` : '';
-          return `<note><pitch><step>${s.letter.toUpperCase()}</step>${alter}<octave>${s.octave}</octave></pitch>` +
-            `<duration>${dur}</duration>${ties.join('')}<type>${XML_TYPE[p.dur]}</type>${dot}${notations}</note>`;
-        })
-        .join('');
+      const start = k;
+      k += m.length;
+      const write = (staff) => m.map((p, j) => noteXML(p, flat[start + j - 1], flat[start + j + 1], score.keySig, staff)).join('');
+      const total = m.reduce((t, p) => t + TICKS[p.dur] * (p.dots ? 1.5 : 1), 0);
+      const notes = grand ? `${write(1)}<backup><duration>${total}</duration></backup>${write(2)}` : write(null);
       const bar = i === measures.length - 1 ? '<barline location="right"><bar-style>light-heavy</bar-style></barline>' : '';
       return `<measure number="${i + 1}">${attrs}${notes}${bar}</measure>`;
     })
@@ -75,9 +90,10 @@ export function toMidi(score) {
   const { events } = playbackEvents(score);
   const msgs = [];
   for (const e of events) {
-    if (e.midi === null) continue;
-    msgs.push({ t: Math.round(e.start * PPQ), d: [0x90, e.midi, 90] });
-    msgs.push({ t: Math.round((e.start + e.len) * PPQ), d: [0x80, e.midi, 0] });
+    for (const m of e.midis) {
+      msgs.push({ t: Math.round(e.start * PPQ), d: [0x90, m, 90] });
+      msgs.push({ t: Math.round((e.start + e.len) * PPQ), d: [0x80, m, 0] });
+    }
   }
   msgs.sort((a, b) => a.t - b.t || a.d[0] - b.d[0]);
   const usPerQ = Math.round(60000000 / score.tempo);

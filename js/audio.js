@@ -65,7 +65,8 @@ export function playScore(score, { from = 0, onNote, onEnd } = {}) {
     if (e.start + e.len <= offset) continue;
     const s = Math.max(e.start, offset);
     const len = e.start + e.len - s;
-    if (e.midi !== null) tone(ac, e.midi, t0 + (s - offset) * secPerQ, len * secPerQ * 0.95);
+    const gain = 0.25 / Math.sqrt(Math.max(1, e.midis.length));
+    for (const m of e.midis) tone(ac, m, t0 + (s - offset) * secPerQ, len * secPerQ * 0.95, gain);
     for (const sp of e.srcs) {
       if (sp.start < offset) continue;
       timers.push(setTimeout(() => onNote?.(sp.src), (t0 - ac.currentTime + (sp.start - offset) * secPerQ) * 1000));
@@ -89,10 +90,11 @@ export function playScore(score, { from = 0, onNote, onEnd } = {}) {
   };
 }
 
-// Toca uma nota curta (ao tocar no teclado virtual).
+// Toca uma nota (ou acorde) curta, ao tocar no teclado virtual.
 export function previewNote(midi) {
   const ac = audioContext();
-  tone(ac, midi, ac.currentTime + 0.01, 0.35);
+  const list = Array.isArray(midi) ? midi : [midi];
+  for (const m of list) tone(ac, m, ac.currentTime + 0.01, 0.35, 0.25 / Math.sqrt(list.length));
 }
 
 // Metrônomo contínuo. Retorna o horário (ms, relógio do AudioContext) do primeiro tempo após a contagem.
@@ -115,40 +117,80 @@ export function startMetronome(beatsPerBar, tempo, countInBars = 1, beatUnitQ = 
   };
 }
 
-// Captura do microfone com análise de altura a cada ~20 ms.
-export async function startMic(onFrame, { silence = 0.01 } = {}) {
-  const ac = audioContext();
-  const stream = await navigator.mediaDevices.getUserMedia({
+export const canCaptureTab = () => !!navigator.mediaDevices?.getDisplayMedia && !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+export function getMicStream() {
+  return navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
+}
+
+// Som de uma aba do navegador (ex.: um vídeo do YouTube). O Chrome pede para escolher a aba
+// e marcar "Compartilhar áudio". Retorna um stream só com o áudio.
+export async function getTabStream() {
+  const display = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false },
+    preferCurrentTab: true,
+    selfBrowserSurface: 'include',
+    systemAudio: 'include',
+  });
+  const audio = display.getAudioTracks();
+  if (!audio.length) {
+    display.getTracks().forEach((t) => t.stop());
+    throw new Error('sem-audio');
+  }
+  const stream = new MediaStream(audio);
+  stream.release = () => display.getTracks().forEach((t) => t.stop());
+  return stream;
+}
+
+// Analisa um stream ao vivo (altura a cada ~20 ms) e, opcionalmente, grava o áudio para a IA.
+export function listen(stream, onFrame, { silence = 0.01, record = false, onEnded } = {}) {
+  const ac = audioContext();
   const source = ac.createMediaStreamSource(stream);
   const analyser = ac.createAnalyser();
   analyser.fftSize = 2048;
   source.connect(analyser);
   const buf = new Float32Array(analyser.fftSize);
-  const opts = { silence };
   const timer = setInterval(() => {
     analyser.getFloatTimeDomainData(buf);
-    const t = ac.currentTime * 1000;
-    onFrame(t, analyzeFrame(buf, ac.sampleRate, opts));
+    onFrame(ac.currentTime * 1000, analyzeFrame(buf, ac.sampleRate, { silence }));
   }, 20);
+  let recorder = null;
+  const chunks = [];
+  const startMs = ac.currentTime * 1000;
+  if (record) {
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.start(1000);
+  }
+  stream.getAudioTracks()[0]?.addEventListener('ended', () => onEnded?.());
   return {
-    setSilence(v) {
-      opts.silence = v;
-    },
+    startMs,
+    // Para tudo; se estava gravando, devolve o áudio gravado (Blob).
     stop() {
       clearInterval(timer);
       source.disconnect();
-      stream.getTracks().forEach((t) => t.stop());
+      const done = new Promise((resolve) => {
+        if (!recorder || recorder.state === 'inactive') return resolve(chunks.length ? new Blob(chunks) : null);
+        recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType }));
+        recorder.stop();
+      });
+      return done.finally(() => {
+        stream.getTracks().forEach((t) => t.stop());
+        stream.release?.();
+      });
     },
   };
 }
 
-// Analisa um arquivo de áudio inteiro, chamando onFrame para cada quadro de 20 ms.
-export async function analyzeFile(file, onFrame, { silence = 0.01, onProgress } = {}) {
-  const ac = audioContext();
-  const data = await file.arrayBuffer();
-  const audio = await ac.decodeAudioData(data);
+export async function decodeAudio(blob) {
+  return audioContext().decodeAudioData(await blob.arrayBuffer());
+}
+
+// Analisa um áudio inteiro (melodia), chamando onFrame para cada quadro de 20 ms.
+export async function analyzeBuffer(audio, onFrame, { silence = 0.01, onProgress } = {}) {
   const sr = audio.sampleRate;
   const ch = audio.getChannelData(0);
   let mono = ch;

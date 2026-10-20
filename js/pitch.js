@@ -175,14 +175,18 @@ export class Transcriber {
   }
 }
 
-// Converte eventos { midi, ticks } em notas da partitura (figuras longas viram notas ligadas).
+// Converte eventos em notas da partitura (figuras longas viram notas ligadas).
+// Cada evento: { midi, ticks } (melodia) ou { midis: [...], ticks, tie } (acordes); sem altura = pausa.
 export function eventsToNotes(events) {
   const notes = [];
   for (const e of events) {
+    const midis = e.midis ?? (e.midi === null || e.midi === undefined ? [] : [e.midi]);
+    const rest = midis.length === 0;
     const parts = decompose(e.ticks);
     parts.forEach((p, i) => {
-      const n = makeNote(e.midi ?? 71, p.dur, p.dots, e.midi === null);
-      n.tie = e.midi !== null && i < parts.length - 1;
+      const top = rest ? 71 : midis[midis.length - 1];
+      const n = makeNote(top, p.dur, p.dots, rest, midis.slice(0, -1));
+      n.tie = !rest && (i < parts.length - 1 || !!e.tie);
       notes.push(n);
     });
   }
