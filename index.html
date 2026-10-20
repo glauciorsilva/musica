@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1565c0">
+  <meta name="description" content="Crie partituras ouvindo o som pelo microfone do celular ou escrevendo as notas à mão.">
+  <title>Partitura Viva</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="btnMenu" class="icon-btn" aria-label="Menu">☰</button>
+    <input id="title" class="title-input" aria-label="Título da partitura" maxlength="80">
+    <button id="btnSettings" class="icon-btn" aria-label="Configurações da partitura" title="Compasso, tonalidade, andamento">⚙</button>
+  </header>
+
+  <section id="settings" class="settings" hidden>
+    <label>Andamento (BPM)
+      <input id="tempo" type="number" min="30" max="240" step="1" inputmode="numeric">
+    </label>
+    <label>Compasso
+      <select id="timeSig">
+        <option value="2/4">2/4</option>
+        <option value="3/4">3/4</option>
+        <option value="4/4">4/4</option>
+        <option value="5/4">5/4</option>
+        <option value="2/2">2/2</option>
+        <option value="3/8">3/8</option>
+        <option value="6/8">6/8</option>
+        <option value="9/8">9/8</option>
+        <option value="12/8">12/8</option>
+      </select>
+    </label>
+    <label>Tonalidade
+      <select id="keySig"></select>
+    </label>
+    <label>Clave
+      <select id="clef">
+        <option value="treble">Sol</option>
+        <option value="bass">Fá</option>
+      </select>
+    </label>
+    <label class="wide">Compositor
+      <input id="composer" maxlength="80" placeholder="(opcional)">
+    </label>
+  </section>
+
+  <main id="scoreWrap" class="score-wrap">
+    <div id="score" class="score" aria-label="Partitura"></div>
+    <p id="emptyHint" class="hint">Toque em <b>🎤 Gravar</b> e cante ou toque um instrumento — ou use <b>✏️ Editar</b> para escrever as notas.</p>
+  </main>
+
+  <footer class="panel">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="edit" role="tab">✏️ Editar</button>
+      <button class="tab" data-tab="record" role="tab">🎤 Gravar</button>
+      <button id="btnPlay" class="tab play" aria-label="Tocar">▶ Tocar</button>
+    </nav>
+
+    <div id="tab-edit" class="tab-body">
+      <div class="row" id="durRow" aria-label="Duração">
+        <!-- botões de duração gerados pelo app.js -->
+        <button id="btnDot" class="tool" title="Ponto de aumento (.)">•</button>
+      </div>
+      <div class="row">
+        <button id="btnRest" class="tool" title="Inserir pausa / transformar em pausa (0)">Pausa</button>
+        <button id="btnSharp" class="tool" title="Meio tom acima (♯)">♯</button>
+        <button id="btnFlat" class="tool" title="Meio tom abaixo (♭)">♭</button>
+        <button id="btnUp" class="tool" title="Próxima nota da escala (↑)">▲</button>
+        <button id="btnDown" class="tool" title="Nota anterior da escala (↓)">▼</button>
+        <button id="btnOctUp" class="tool" title="Oitava acima">8ª▲</button>
+        <button id="btnOctDown" class="tool" title="Oitava abaixo">8ª▼</button>
+      </div>
+      <div class="row">
+        <button id="btnTie" class="tool" title="Ligar à próxima nota">Ligar</button>
+        <button id="btnEnh" class="tool" title="Trocar grafia (Dó♯ ↔ Ré♭)">♯↔♭</button>
+        <button id="btnPrev" class="tool" title="Nota anterior (←)">◀</button>
+        <button id="btnNext" class="tool" title="Próxima nota (→)">▶</button>
+        <button id="btnMode" class="tool mode" title="O piano insere novas notas ou substitui a selecionada">Inserir</button>
+        <button id="btnDelete" class="tool danger" title="Apagar (Delete)">⌫</button>
+        <button id="btnUndo" class="tool" title="Desfazer (Ctrl+Z)">↶</button>
+        <button id="btnRedo" class="tool" title="Refazer (Ctrl+Y)">↷</button>
+      </div>
+      <div class="piano-bar">
+        <button id="btnPianoDown" class="tool small" aria-label="Oitavas abaixo">−</button>
+        <span id="pianoRange" class="piano-range"></span>
+        <button id="btnPianoUp" class="tool small" aria-label="Oitavas acima">+</button>
+      </div>
+      <div id="piano" class="piano" aria-label="Teclado"></div>
+    </div>
+
+    <div id="tab-record" class="tab-body" hidden>
+      <div class="rec-main">
+        <button id="btnRecord" class="rec-btn" aria-label="Gravar"><span></span></button>
+        <div class="live">
+          <div id="liveNote" class="live-note">—</div>
+          <div id="liveFreq" class="live-freq">Toque no botão vermelho para começar</div>
+          <div class="tuner"><div class="tuner-mid"></div><div id="tunerNeedle" class="tuner-needle"></div></div>
+          <div class="meter"><div id="meterBar" class="meter-bar"></div></div>
+        </div>
+      </div>
+      <div class="rec-opts">
+        <label><input id="optMetronome" type="checkbox"> Metrônomo (1 compasso de contagem)</label>
+        <label><input id="optMergeRests" type="checkbox" checked> Ignorar pausas curtas</label>
+        <label>Precisão rítmica
+          <select id="optGrid">
+            <option value="2">Semicolcheia (1/16)</option>
+            <option value="4">Colcheia (1/8)</option>
+            <option value="8">Semínima (1/4)</option>
+          </select>
+        </label>
+        <label>Sensibilidade
+          <input id="optSensitivity" type="range" min="1" max="10" value="6">
+        </label>
+        <label class="file-btn">🎵 Transcrever arquivo de áudio
+          <input id="audioFile" type="file" accept="audio/*" hidden>
+        </label>
+      </div>
+      <p class="hint small">Funciona melhor com uma melodia (uma nota de cada vez): voz, flauta, violino, assobio… O andamento usado é o das configurações (⚙).</p>
+    </div>
+  </footer>
+
+  <dialog id="menu" class="sheet">
+    <h2>Partitura</h2>
+    <button data-action="new">📄 Nova partitura</button>
+    <button data-action="library">📚 Minhas partituras</button>
+    <button data-action="saveLocal">💾 Salvar no aparelho</button>
+    <button data-action="open">📂 Abrir arquivo (.json)</button>
+    <button data-action="downloadJson">⬇ Baixar arquivo editável (.json)</button>
+    <h2>Exportar</h2>
+    <button data-action="musicxml">🎼 MusicXML (MuseScore, Finale…)</button>
+    <button data-action="midi">🎹 MIDI</button>
+    <button data-action="svg">🖼 Imagem SVG</button>
+    <button data-action="print">🖨 Imprimir / PDF</button>
+    <button data-action="help">❓ Ajuda</button>
+    <button data-action="close" class="muted">Fechar</button>
+    <input id="openFile" type="file" accept=".json,application/json" hidden>
+  </dialog>
+
+  <dialog id="library" class="sheet">
+    <h2>Minhas partituras</h2>
+    <ul id="libraryList" class="library-list"></ul>
+    <button data-close class="muted">Fechar</button>
+  </dialog>
+
+  <dialog id="help" class="sheet">
+    <h2>Como usar</h2>
+    <p><b>🎤 Gravar:</b> toque no botão vermelho, permita o microfone e cante ou toque. As notas aparecem na partitura enquanto você toca. Ajuste o andamento (⚙) para o ritmo ficar correto, ou ligue o metrônomo.</p>
+    <p><b>✏️ Editar:</b> escolha a duração (1, ½, ¼, ⅛…) e toque nas teclas do piano. Toque numa nota da partitura para selecioná-la e mudar altura, duração, ponto, acidente ou apagá-la. Toque entre as notas para posicionar o cursor de inserção.</p>
+    <p><b>Inserir / Substituir:</b> em “Substituir”, o piano troca a altura da nota selecionada e avança para a próxima.</p>
+    <p><b>Teclado do computador:</b> A–G inserem notas, 1–6 mudam a duração, “.” ponto, 0 pausa, ↑/↓ escala, ←/→ navegar, Delete apaga, Ctrl+Z desfaz, espaço toca.</p>
+    <p>As barras de compasso e as ligaduras entre compassos são criadas automaticamente. Tudo é salvo automaticamente no aparelho.</p>
+    <button data-close class="muted">Fechar</button>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/vexflow.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
