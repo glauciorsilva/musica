@@ -1,5 +1,5 @@
 // Service worker: permite usar o app sem internet depois da primeira visita.
-const CACHE = 'partitura-v1';
+const CACHE = 'partitura-v2';
 const FILES = [
   './',
   'index.html',
@@ -10,6 +10,7 @@ const FILES = [
   'js/pitch.js',
   'js/audio.js',
   'js/export.js',
+  'js/poly.js',
   'vendor/vexflow.js',
   'manifest.webmanifest',
   'icons/icon.svg',

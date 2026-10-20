@@ -153,8 +153,14 @@ export function createScore() {
   };
 }
 
-export function makeNote(midi, dur, dots = 0, rest = false) {
-  return { id: newId(), midi, dur, dots, rest, tie: false, pref: null };
+// "midi" é a nota principal; "chord" guarda as outras notas tocadas junto (acorde).
+export function makeNote(midi, dur, dots = 0, rest = false, chord = []) {
+  return { id: newId(), midi, dur, dots, rest, tie: false, pref: null, chord };
+}
+
+// Todas as alturas da nota, da mais grave para a mais aguda.
+export function pitchesOf(note) {
+  return [...new Set([note.midi, ...(note.chord || [])])].sort((a, b) => a - b);
 }
 
 export function measureTicks(score) {
@@ -185,6 +191,7 @@ export function layoutMeasures(score) {
           dots: p.dots,
           rest: note.rest,
           midi: note.midi,
+          midis: pitchesOf(note),
           pref: note.pref,
           tie: note.rest ? false : lastOfNote ? !!note.tie : true,
           first,
@@ -206,17 +213,18 @@ export function playbackEvents(score) {
   score.notes.forEach((n, src) => {
     const len = noteTicks(n) / 8;
     if (!n.rest) {
-      if (open && open.midi === n.midi) {
+      const midis = pitchesOf(n);
+      if (open && open.midis.join() === midis.join()) {
         open.len += len;
         open.srcs.push({ src, start: pos });
       } else {
-        open = { midi: n.midi, start: pos, len, srcs: [{ src, start: pos }] };
+        open = { midis, start: pos, len, srcs: [{ src, start: pos }] };
         events.push(open);
       }
       if (!n.tie) open = null;
     } else {
       open = null;
-      events.push({ midi: null, start: pos, len, srcs: [{ src, start: pos }] });
+      events.push({ midis: [], start: pos, len, srcs: [{ src, start: pos }] });
     }
     pos += len;
   });
@@ -238,6 +246,7 @@ export function validateScore(obj) {
       rest: !!n.rest,
       tie: !!n.tie,
       pref: n.pref === 'sharp' || n.pref === 'flat' ? n.pref : null,
+      chord: Array.isArray(n.chord) ? n.chord.filter(Number.isFinite) : [],
     }));
   return s;
 }

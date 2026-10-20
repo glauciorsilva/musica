@@ -48,7 +48,7 @@ test('reprodução une notas ligadas', () => {
   const { events, total } = playbackEvents(s);
   assert.equal(events.length, 2);
   assert.equal(events[0].len, 1.5);
-  assert.equal(events[1].midi, null);
+  assert.deepEqual(events[1].midis, []);
   assert.equal(total, 2);
 });
 
@@ -63,4 +63,17 @@ test('exporta MusicXML e MIDI', () => {
   assert.equal((xml.match(/<measure /g) || []).length, 2);
   const mid = toMidi(s);
   assert.equal(String.fromCharCode(...mid.slice(0, 4)), 'MThd');
+});
+
+test('MusicXML em pauta dupla separa as notas pelo Dó central', () => {
+  const s = createScore();
+  s.clef = 'grand';
+  const n = makeNote(72, 'h', 0, false, [48, 64]);
+  n.tie = true;
+  s.notes = [n, makeNote(72, 'h', 0, false, [48, 64])];
+  const xml = toMusicXML(s);
+  assert.match(xml, /<staves>2<\/staves>/);
+  assert.match(xml, /<backup><duration>32<\/duration><\/backup>/);
+  assert.equal((xml.match(/<staff>2<\/staff>/g) || []).length, 2);
+  assert.equal((xml.match(/<tie type="start"\/>/g) || []).length, 3);
 });

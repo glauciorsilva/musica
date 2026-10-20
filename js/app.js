@@ -1,9 +1,12 @@
 import {
-  DURATIONS, KEYS, createScore, diatonicStep, keyAlterations, makeNote, noteName, validateScore,
+  DURATIONS, KEYS, createScore, diatonicStep, keyAlterations, makeNote, noteName, pitchesOf, validateScore,
 } from './score.js';
 import { renderScore, hitTest } from './render.js';
 import { Transcriber, eventsToNotes } from './pitch.js';
-import { analyzeFile, playScore, previewNote, startMetronome, startMic } from './audio.js';
+import {
+  analyzeBuffer, canCaptureTab, decodeAudio, getMicStream, getTabStream, listen, playScore, previewNote, startMetronome,
+} from './audio.js';
+import { detectNotesPoly, polyToEvents } from './poly.js';
 import { toMidi, toMusicXML } from './export.js';
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +27,8 @@ const state = {
   layout: null,
   player: null,
   rec: null,
+  busy: false,
+  chordMode: false, // piano adiciona notas ao acorde da nota atual
 };
 state.caret = state.score.notes.length;
 
@@ -155,12 +160,38 @@ function insertNote(midi, rest = false) {
   scrollToSelection();
 }
 
+// Liga/desliga uma altura no acorde da nota atual.
+function toggleChordPitch(i, midi) {
+  change((s) => {
+    const n = s.notes[i];
+    if (n.rest) {
+      Object.assign(n, { rest: false, midi, chord: [], pref: null });
+      return;
+    }
+    const pitches = pitchesOf(n);
+    const next = pitches.includes(midi) ? pitches.filter((m) => m !== midi) : [...pitches, midi];
+    if (!next.length) return;
+    next.sort((a, b) => a - b);
+    if (!next.includes(n.midi)) {
+      n.midi = next[next.length - 1];
+      n.pref = null;
+    }
+    n.chord = next.filter((m) => m !== n.midi);
+  });
+  previewNote(pitchesOf(state.score.notes[i]));
+}
+
 function pianoInput(midi) {
+  if (state.chordMode && target() !== null) {
+    toggleChordPitch(target(), midi);
+    return;
+  }
   previewNote(midi);
   if (state.mode === 'replace' && state.sel !== null) {
     const i = state.sel;
     change((s) => {
       s.notes[i].midi = midi;
+      s.notes[i].chord = [];
       s.notes[i].rest = false;
       s.notes[i].pref = null;
     });
@@ -180,7 +211,7 @@ function editSelected(fn, preview = true) {
   if (i === null) return;
   change((s) => fn(s.notes[i]));
   const n = state.score.notes[i];
-  if (preview && n && !n.rest) previewNote(n.midi);
+  if (preview && n && !n.rest) previewNote(pitchesOf(n));
 }
 
 function select(i) {
@@ -325,11 +356,17 @@ function setupPiano() {
   };
 }
 
+// Aplica uma transformação a todas as alturas da nota (inclusive as do acorde).
+function transpose(n, fn) {
+  n.midi = fn(n.midi);
+  n.chord = (n.chord || []).map(fn);
+}
+
 const isBlackKey = (midi) => [1, 3, 6, 8, 10].includes(((midi % 12) + 12) % 12);
 
 // Meio tom acima/abaixo; teclas pretas são escritas com o acidente do botão usado.
 function shift(n, delta, pref) {
-  n.midi += delta;
+  transpose(n, (m) => m + delta);
   n.pref = isBlackKey(n.midi) ? pref : null;
 }
 
@@ -339,10 +376,15 @@ function setupEditTools() {
   $('btnRest').onclick = toggleRest;
   $('btnSharp').onclick = () => editSelected((n) => shift(n, 1, 'sharp'));
   $('btnFlat').onclick = () => editSelected((n) => shift(n, -1, 'flat'));
-  $('btnUp').onclick = () => editSelected((n) => { n.midi = diatonicStep(n.midi, state.score.keySig, 1); n.pref = null; });
-  $('btnDown').onclick = () => editSelected((n) => { n.midi = diatonicStep(n.midi, state.score.keySig, -1); n.pref = null; });
-  $('btnOctUp').onclick = () => editSelected((n) => (n.midi = Math.min(108, n.midi + 12)));
-  $('btnOctDown').onclick = () => editSelected((n) => (n.midi = Math.max(21, n.midi - 12)));
+  $('btnUp').onclick = () => editSelected((n) => { transpose(n, (m) => diatonicStep(m, state.score.keySig, 1)); n.pref = null; });
+  $('btnDown').onclick = () => editSelected((n) => { transpose(n, (m) => diatonicStep(m, state.score.keySig, -1)); n.pref = null; });
+  $('btnOctUp').onclick = () => editSelected((n) => Math.max(...pitchesOf(n)) <= 96 && transpose(n, (m) => m + 12));
+  $('btnOctDown').onclick = () => editSelected((n) => Math.min(...pitchesOf(n)) >= 24 && transpose(n, (m) => m - 12));
+  $('btnChord').onclick = () => {
+    state.chordMode = !state.chordMode;
+    $('btnChord').classList.toggle('on', state.chordMode);
+    toast(state.chordMode ? 'Acorde: o piano junta notas à nota atual' : 'O piano volta a inserir notas');
+  };
   $('btnTie').onclick = () => editSelected((n) => (n.tie = !n.tie), false);
   $('btnEnh').onclick = () => editSelected((n) => {
     if (!isBlackKey(n.midi)) n.pref = null;
@@ -365,7 +407,7 @@ function setupEditTools() {
     if (r.select !== undefined) {
       if (state.sel === r.select) {
         const n = state.score.notes[r.select];
-        if (!n.rest) previewNote(n.midi);
+        if (!n.rest) previewNote(pitchesOf(n));
       }
       select(r.select);
     } else {
@@ -503,6 +545,9 @@ function sensitivityToSilence(v) {
   return 0.05 * Math.pow(0.6, v - 1);
 }
 
+const currentSilence = () => sensitivityToSilence(Number($('optSensitivity').value));
+const transcriptionMode = () => $('optMode').value; // 'mono' | 'all' | 'top' | 'bottom'
+
 function makeTranscriber(origin = null) {
   return new Transcriber({
     tempo: state.score.tempo,
@@ -531,6 +576,19 @@ function applyCapture(cap, events) {
   return notes.length;
 }
 
+function finishCapture(n) {
+  save();
+  $('liveNote').textContent = '—';
+  $('liveFreq').textContent = n ? `${n} notas adicionadas` : 'Nenhuma nota detectada';
+  if (!n) state.undo.pop();
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  for (const id of ['btnRecord', 'btnTab']) $(id).disabled = busy;
+  $('audioFile').disabled = busy;
+}
+
 function showLive(frame, keySig) {
   $('meterBar').style.width = `${Math.min(100, Math.sqrt(frame.level) * 250)}%`;
   if (frame.midi === null) {
@@ -545,93 +603,215 @@ function showLive(frame, keySig) {
   $('tunerNeedle').style.left = `${50 + cents}%`;
 }
 
-async function startRecording() {
+// source: 'mic' (microfone) ou 'tab' (som de uma aba do navegador, ex.: YouTube)
+async function startRecording(source = 'mic') {
+  if (state.rec || state.busy) return;
   if (state.player) state.player.stop();
-  if (!navigator.mediaDevices?.getUserMedia) {
+  if (source === 'mic' && !navigator.mediaDevices?.getUserMedia) {
     toast('Este navegador não permite acesso ao microfone (use HTTPS).');
     return;
   }
-  const cap = beginCapture();
-  let tr = makeTranscriber();
-  let metro = null;
-  const rec = { cap, tr, mic: null, metro: null, last: 0 };
-  state.rec = rec;
-  $('btnRecord').classList.add('on');
-  $('liveFreq').textContent = 'Preparando microfone…';
+  const mode = transcriptionMode();
+  const ai = mode !== 'mono';
+  let stream;
   try {
-    rec.mic = await startMic((t, frame) => {
-      if (state.rec !== rec) return;
-      showLive(frame, state.score.keySig);
-      rec.tr.feed(t, frame.midi, frame.level);
-      if (t - rec.last > 250) {
-        rec.last = t;
-        applyCapture(cap, rec.tr.events(t));
-      }
-    }, { silence: sensitivityToSilence(Number($('optSensitivity').value)) });
+    $('liveFreq').textContent = source === 'tab' ? 'Escolha a aba e marque “Compartilhar áudio”…' : 'Preparando microfone…';
+    stream = source === 'tab' ? await getTabStream() : await getMicStream();
   } catch (err) {
     console.error(err);
-    state.rec = null;
-    state.undo.pop();
-    $('btnRecord').classList.remove('on');
-    $('liveFreq').textContent = 'Não foi possível usar o microfone.';
-    toast('Permita o acesso ao microfone para gravar.');
+    const msg = err.message === 'sem-audio'
+      ? 'Marque a opção “Compartilhar áudio da aba” ao escolher a aba.'
+      : source === 'tab' ? 'Captura do som da aba cancelada.' : 'Permita o acesso ao microfone para gravar.';
+    $('liveFreq').textContent = msg;
+    toast(msg);
     return;
   }
-  if ($('optMetronome').checked) {
+  const cap = beginCapture();
+  const btn = source === 'tab' ? $('btnTab') : $('btnRecord');
+  const rec = { cap, mode, btn, tr: makeTranscriber(), listener: null, metro: null, last: 0, origin: null };
+  state.rec = rec;
+  btn.classList.add('on');
+  if (source === 'tab') btn.textContent = '■ Parar captura';
+  rec.listener = listen(stream, (t, frame) => {
+    if (state.rec !== rec) return;
+    showLive(frame, state.score.keySig);
+    if (ai) return;
+    rec.tr.feed(t, frame.midi, frame.level);
+    if (t - rec.last > 250) {
+      rec.last = t;
+      applyCapture(cap, rec.tr.events(t));
+    }
+  }, { silence: currentSilence(), record: ai, onEnded: () => stopRecording() });
+
+  if ($('optMetronome').checked && source === 'mic') {
     const { num, den } = state.score.timeSig;
-    metro = startMetronome(num, state.score.tempo, 1, 4 / den);
-    rec.metro = metro;
-    rec.tr = tr = makeTranscriber(metro.downbeatMs);
+    rec.metro = startMetronome(num, state.score.tempo, 1, 4 / den);
+    rec.tr = makeTranscriber(rec.metro.downbeatMs);
+    rec.origin = rec.metro.downbeatMs - rec.listener.startMs;
     toast('Contagem de um compasso…');
+  } else if (source === 'tab') {
+    toast('Capturando o som — dê play no vídeo!');
   } else {
-    toast('Gravando — pode cantar ou tocar!');
+    toast(ai ? 'Gravando — a análise é feita quando você parar.' : 'Gravando — pode cantar ou tocar!');
   }
 }
 
-function stopRecording() {
+async function stopRecording() {
   const rec = state.rec;
   if (!rec) return;
   state.rec = null;
-  rec.mic?.stop();
   rec.metro?.stop();
-  const events = rec.tr.finish();
-  const n = applyCapture(rec.cap, events);
-  save();
-  $('btnRecord').classList.remove('on');
-  $('liveNote').textContent = '—';
+  rec.btn.classList.remove('on');
+  $('btnTab').textContent = '🎧 Transcrever o som de uma aba';
   $('meterBar').style.width = '0';
-  $('liveFreq').textContent = n ? `${n} notas adicionadas` : 'Nenhuma nota detectada';
-  if (!n) state.undo.pop();
+  $('liveNote').textContent = '—';
+  const blob = await rec.listener.stop();
+  if (rec.mode === 'mono') {
+    finishCapture(applyCapture(rec.cap, rec.tr.finish()));
+    return;
+  }
+  if (!blob) {
+    finishCapture(0);
+    return;
+  }
+  await transcribeAI(rec.cap, () => decodeAudio(blob), rec.mode, rec.origin);
 }
 
-async function transcribeFile(file) {
-  if (!file) return;
-  const cap = beginCapture();
-  const tr = makeTranscriber();
-  $('liveNote').textContent = '…';
-  try {
-    const end = await analyzeFile(file, (t, frame) => tr.feed(t, frame.midi, frame.level), {
-      silence: sensitivityToSilence(Number($('optSensitivity').value)),
-      onProgress: (p) => ($('liveFreq').textContent = `Analisando arquivo… ${Math.round(p * 100)}%`),
-    });
-    const n = applyCapture(cap, tr.finish(end));
-    save();
-    $('liveNote').textContent = '—';
-    $('liveFreq').textContent = n ? `${n} notas adicionadas` : 'Nenhuma nota detectada';
-    if (!n) state.undo.pop();
-  } catch (err) {
-    console.error(err);
-    state.undo.pop();
-    $('liveFreq').textContent = 'Não foi possível ler este arquivo de áudio.';
+// Escolhe a clave pelas alturas das notas (só quando a partitura estava vazia).
+function autoClef(events, mode) {
+  const all = events.flatMap((e) => e.midis ?? (e.midi == null ? [] : [e.midi])).sort((a, b) => a - b);
+  if (!all.length) return;
+  const low = all[Math.floor(all.length * 0.1)];
+  const high = all[Math.floor(all.length * 0.9)];
+  let clef = all[Math.floor(all.length / 2)] < 57 ? 'bass' : 'treble';
+  if (mode === 'all' && low < 55 && high > 64) clef = 'grand';
+  if (clef !== state.score.clef) {
+    state.score.clef = clef;
+    syncSettings();
   }
 }
 
+async function transcribeAI(cap, getAudio, mode, origin = null) {
+  setBusy(true);
+  $('liveNote').textContent = '…';
+  try {
+    const audio = await getAudio();
+    const notes = await detectNotesPoly(audio, (p, label) => {
+      $('liveFreq').textContent = `${label} ${Math.round(p * 100)}%`;
+    });
+    const events = polyToEvents(notes, {
+      tempo: state.score.tempo,
+      gridTicks: Number($('optGrid').value),
+      mode,
+      origin,
+      minRestTicks: $('optMergeRests').checked ? 4 : 1,
+    });
+    if (!cap.base.length) autoClef(events, mode);
+    finishCapture(applyCapture(cap, events));
+  } catch (err) {
+    console.error(err);
+    state.undo.pop();
+    $('liveNote').textContent = '—';
+    $('liveFreq').textContent = 'Não foi possível analisar o áudio.';
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function transcribeFile(file) {
+  if (!file || state.busy || state.rec) return;
+  const mode = transcriptionMode();
+  const cap = beginCapture();
+  if (mode !== 'mono') {
+    await transcribeAI(cap, () => decodeAudio(file), mode);
+    return;
+  }
+  setBusy(true);
+  const tr = makeTranscriber();
+  $('liveNote').textContent = '…';
+  try {
+    const audio = await decodeAudio(file);
+    const end = await analyzeBuffer(audio, (t, frame) => tr.feed(t, frame.midi, frame.level), {
+      silence: currentSilence(),
+      onProgress: (p) => ($('liveFreq').textContent = `Analisando arquivo… ${Math.round(p * 100)}%`),
+    });
+    finishCapture(applyCapture(cap, tr.finish(end)));
+  } catch (err) {
+    console.error(err);
+    state.undo.pop();
+    $('liveNote').textContent = '—';
+    $('liveFreq').textContent = 'Não foi possível ler este arquivo de áudio.';
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ---------- YouTube ----------
+
+function youtubeId(url) {
+  const s = String(url).trim();
+  if (/^[\w-]{11}$/.test(s)) return s;
+  const m = s.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
+function openYoutube() {
+  const id = youtubeId($('ytUrl').value);
+  if (!id) {
+    toast('Link do YouTube não reconhecido');
+    return;
+  }
+  const box = $('ytPlayer');
+  box.innerHTML = '';
+  const frame = document.createElement('iframe');
+  frame.src = `https://www.youtube-nocookie.com/embed/${id}?rel=0&playsinline=1`;
+  frame.title = 'Vídeo do YouTube';
+  frame.allow = 'autoplay; encrypted-media; picture-in-picture';
+  frame.allowFullscreen = true;
+  const link = document.createElement('a');
+  link.href = `https://www.youtube.com/watch?v=${id}`;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = 'O vídeo não abre aqui? Abrir no YouTube ↗';
+  box.append(frame, link);
+  box.hidden = false;
+}
+
+// Toques no ritmo da música para descobrir o andamento.
+const taps = [];
+function tapTempo() {
+  const now = performance.now();
+  if (taps.length && now - taps[taps.length - 1] > 2000) taps.length = 0;
+  taps.push(now);
+  if (taps.length > 8) taps.shift();
+  if (taps.length < 3) {
+    $('btnTap').textContent = `👆 Continue tocando… (${taps.length})`;
+    return;
+  }
+  const avg = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
+  const bpm = Math.max(30, Math.min(240, Math.round(60000 / avg)));
+  state.score.tempo = bpm;
+  syncSettings();
+  save();
+  $('btnTap').textContent = `👆 ${bpm} BPM — toque de novo para ajustar`;
+}
+
 function setupRecording() {
-  $('btnRecord').onclick = () => (state.rec ? stopRecording() : startRecording());
+  $('btnRecord').onclick = () => (state.rec ? stopRecording() : startRecording('mic'));
+  $('btnTab').onclick = () => (state.rec ? stopRecording() : startRecording('tab'));
   $('audioFile').addEventListener('change', (e) => {
     transcribeFile(e.target.files[0]);
     e.target.value = '';
   });
+  $('btnYt').onclick = openYoutube;
+  $('ytUrl').addEventListener('keydown', (e) => e.key === 'Enter' && openYoutube());
+  $('btnTap').onclick = tapTempo;
+  if (canCaptureTab()) {
+    $('ytHint').textContent = 'Toque em “Transcrever o som de uma aba”, escolha esta aba (ou a aba do YouTube), marque “Compartilhar áudio” e dê play no vídeo. Toque de novo para parar.';
+  } else {
+    $('btnTab').hidden = true;
+    $('ytHint').textContent = 'No celular, dê play no vídeo com o volume alto e grave pelo botão vermelho (microfone). Para capturar o som direto, sem microfone, use o Chrome ou o Edge no computador.';
+  }
 }
 
 // ---------- Menu / arquivos ----------

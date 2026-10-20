@@ -55,3 +55,32 @@ test('eventos viram notas, com ligaduras quando necessário', () => {
   const notes = eventsToNotes([{ midi: 60, ticks: 10 }, { midi: null, ticks: 8 }]);
   assert.deepEqual(notes.map((n) => [n.dur, n.tie, n.rest]), [['q', true, false], ['16', false, false], ['q', false, true]]);
 });
+
+import { polyToEvents } from '../js/poly.js';
+
+test('polifonia: acordes, melodia e baixo', () => {
+  // 120 BPM: semínima = 500 ms. Dó maior (2 tempos) e depois Sol maior (2 tempos), melodia por cima.
+  const n = (start, dur, midi, amp = 0.5) => ({ start: 1000 + start, dur, midi, amp });
+  const notes = [
+    n(0, 990, 48), n(0, 990, 64), n(0, 990, 67), // acorde C (baixo + mi/sol)
+    n(0, 480, 72), n(500, 480, 74), // melodia dó, ré
+    n(1000, 990, 43), n(1000, 990, 62), n(1000, 990, 71), // acorde G
+    n(1000, 980, 79),
+  ];
+  const all = polyToEvents(notes, { tempo: 120 });
+  assert.deepEqual(all.map((e) => [e.midis.join(','), e.ticks]), [
+    ['48,64,67,72', 8], ['48,64,67,74', 8], ['43,62,71,79', 16],
+  ]);
+  assert.equal(all[0].tie, true); // baixo e acorde continuam ligados
+
+  const top = polyToEvents(notes, { tempo: 120, mode: 'top' });
+  assert.deepEqual(top.map((e) => [e.midis[0], e.ticks]), [[72, 8], [74, 8], [79, 16]]);
+
+  const bass = polyToEvents(notes, { tempo: 120, mode: 'bottom' });
+  assert.deepEqual(bass.map((e) => [e.midis[0], e.ticks, e.tie]), [[48, 16, false], [43, 16, false]]);
+});
+
+test('eventos de acordes viram notas com acorde', () => {
+  const notes = eventsToNotes([{ midis: [60, 64, 67], ticks: 8, tie: true }, { midis: [60, 64, 67], ticks: 8 }]);
+  assert.deepEqual(notes.map((x) => [x.midi, x.chord, x.tie]), [[67, [60, 64], true], [67, [60, 64], false]]);
+});
